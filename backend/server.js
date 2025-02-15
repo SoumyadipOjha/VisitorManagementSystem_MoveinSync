@@ -56,7 +56,6 @@ const visitorSchema = new mongoose.Schema({
   contact: { type: String, required: true },
   purpose: { type: String, required: true },
   hostEmployee: { type: String, required: true },
-  company: { type: String },
   timeSlot: {
     type: String,
     required: true,
