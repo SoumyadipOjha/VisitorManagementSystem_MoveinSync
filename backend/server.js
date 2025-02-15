@@ -148,10 +148,10 @@ app.put("/api/visitors/:id/status", authMiddleware, async (req, res) => {
     // Preserve check-in and check-out times permanently
     let updateFields = { status };
     if (status === "checked-in") {
-      updateFields.checkInTime = visitor.checkInTime || new Date(); // Keep old check-in time if already set
+      updateFields.checkInTime = visitor.checkInTime || new Date();
     }
     if (status === "checked-out") {
-      updateFields.checkOutTime = visitor.checkOutTime || new Date(); // Keep old check-out time if already set
+      updateFields.checkOutTime = visitor.checkOutTime || new Date();
     }
 
     // Update visitor
@@ -160,16 +160,64 @@ app.put("/api/visitors/:id/status", authMiddleware, async (req, res) => {
     console.log(`✅ Visitor status updated: ${updatedVisitor.fullName} is now ${status}`);
 
     // Ensure email field is correct
-    const visitorEmail = visitor.email || visitor.contact; // Assuming `email` is correct, fallback to `contact`
+    const visitorEmail = visitor.email || visitor.contact; // Fallback to `contact` if `email` is missing
+    const visitorPhoto = visitor.photoUrl || "https://via.placeholder.com/150"; // Fallback to a placeholder if no photo is uploaded
 
-    // Send email notification to visitor
-    const mailOptions = {
-      from: "soumyadipojha635@gmail.com",
-      to: visitorEmail,
-      subject: `Visitor Status Update: ${status}`,
-      text: `Dear ${visitor.fullName},\n\nYour visit status has been updated to "${status}".\n\nDetails:\n- Purpose: ${visitor.purpose}\n- Host: ${visitor.hostEmployee}\n- Time Slot: ${visitor.timeSlot}\n- Check-In: ${updatedVisitor.checkInTime ? updatedVisitor.checkInTime : "Not yet"}\n- Check-Out: ${updatedVisitor.checkOutTime ? updatedVisitor.checkOutTime : "Not yet"}\n\nThank you for visiting!\n\nBest regards,\nVisitor Management Team`,
-    };
+    let mailOptions;
 
+    if (status === "approved") {
+      // E-Pass Design
+      mailOptions = {
+        from: "soumyadipojha635@gmail.com",
+        to: visitorEmail,
+        subject: `Your E-Pass for Check-In`,
+        html: `
+          <div style="max-width: 400px; margin: auto; padding: 20px; border: 2px solid #1e3c72; border-radius: 10px; text-align: center; font-family: Arial, sans-serif;">
+            <h2 style="color: #1e3c72;">Official Visitor E-Pass</h2>
+            <img src="${visitorPhoto}" alt="Visitor Photo" style="width: 150px; height: 150px; border-radius: 50%; border: 2px solid #1e3c72; margin-bottom: 10px;">
+            <p><strong>Name:</strong> ${visitor.fullName}</p>
+            <p><strong>Email:</strong> ${visitor.email}</p>
+            <p><strong>Purpose:</strong> ${visitor.purpose}</p>
+            <p><strong>Host:</strong> ${visitor.hostEmployee}</p>
+            <p><strong>Time Slot:</strong> ${visitor.timeSlot}</p>
+            <hr>
+            <p style="color: green; font-weight: bold;">✅ Approved for Check-In</p>
+            <p>Show this e-pass at the entrance.</p>
+          </div>
+        `,
+      };
+    } else if (status === "rejected") {
+      // Rejection Email with Red Cross
+      mailOptions = {
+        from: "soumyadipojha635@gmail.com",
+        to: visitorEmail,
+        subject: `Visitor Request Rejected`,
+        html: `
+          <div style="max-width: 400px; margin: auto; padding: 20px; border: 2px solid red; border-radius: 10px; text-align: center; font-family: Arial, sans-serif;">
+            <h2 style="color: red;">Visitor Request Rejected</h2>
+<img src="http://localhost:5000${visitor.photo}" alt="Rejected" style="width: 150px; height: 150px; border-radius: 50%; margin-bottom: 10px;">
+            <p><strong>Name:</strong> ${visitor.fullName}</p>
+            <p><strong>Email:</strong> ${visitor.email}</p>
+            <p><strong>Purpose:</strong> ${visitor.purpose}</p>
+            <p><strong>Host:</strong> ${visitor.hostEmployee}</p>
+            <p><strong>Time Slot:</strong> ${visitor.timeSlot}</p>
+            <hr>
+            <p style="color: red; font-weight: bold;">❌ Your request has been rejected.</p>
+            <p>If you have any queries, please contact the host.</p>
+          </div>
+        `,
+      };
+    } else {
+      // Default Email Format for Other Statuses
+      mailOptions = {
+        from: "soumyadipojha635@gmail.com",
+        to: visitorEmail,
+        subject: `Visitor Status Update: ${status}`,
+        text: `Dear ${visitor.fullName},\n\nYour visit status has been updated to "${status}".\n\nDetails:\n- Purpose: ${visitor.purpose}\n- Host: ${visitor.hostEmployee}\n- Time Slot: ${visitor.timeSlot}\n- Check-In: ${updatedVisitor.checkInTime ? updatedVisitor.checkInTime : "Not yet"}\n- Check-Out: ${updatedVisitor.checkOutTime ? updatedVisitor.checkOutTime : "Not yet"}\n\nThank you for visiting!\n\nBest regards,\nVisitor Management Team`,
+      };
+    }
+
+    // Send Email
     transporter.sendMail(mailOptions, (err, info) => {
       if (err) {
         console.error("❌ Error sending email:", err);
@@ -274,70 +322,117 @@ const storage = multer.diskStorage({
 const upload = multer({ storage });
 
 // Register Visitor
-app.post("/api/visitors", upload.single("photo"), async (req, res) => {
+app.put("/api/visitors/:id/status", authMiddleware, async (req, res) => {
   try {
-    console.log("🔹 Visitor Registration Request Received");
-    console.log("Request Body:", req.body);
-    console.log("Uploaded File:", req.file);
+      const { id } = req.params;
+      const { status } = req.body;
 
-    const { fullName, contact, purpose, hostEmployee, company, timeSlot } = req.body;
-    const photo = req.file ? `/uploads/${req.file.filename}` : null;
-
-    if (!fullName || !contact || !purpose || !hostEmployee || !timeSlot) {
-      console.log("❌ Missing required fields");
-      return res.status(400).json({ error: "All required fields must be filled." });
-    }
-
-    // Save the visitor first
-    const newVisitor = new Visitor({
-      fullName,
-      contact,
-      purpose,
-      hostEmployee,
-      company,
-      status: "pending",
-      timeSlot,
-      photo,
-    });
-
-    const savedVisitor = await newVisitor.save();
-    console.log("✅ Visitor Saved:", savedVisitor);
-
-    // 🔹 Find the host employee's email
-    const host = await Employee.findOne({ name: hostEmployee });
-
-    // ❗ Check if host exists
-    if (!host) {
-      console.error("❌ Host employee not found.");
-      return res.status(404).json({ error: `Host employee '${hostEmployee}' not found.` });
-    }
-
-    console.log("📧 Sending Email to:", host.email);
-
-    // Email options
-    const mailOptions = {
-      from: "your-email@gmail.com",
-      to: host.email,
-      subject: "New Visitor Registered",
-      text: `Hello ${hostEmployee},\n\nA new visitor has been registered.\n\nName: ${fullName}\nContact: ${contact}\nPurpose: ${purpose}\nTime Slot: ${timeSlot}\nCompany: ${company || "N/A"}\n\nPlease check your dashboard for more details.\n\nBest regards,\nVisitor Management System`,
-    };
-
-    // Send email
-    transporter.sendMail(mailOptions, (err, info) => {
-      if (err) {
-        console.error("❌ Error sending email:", err);
-      } else {
-        console.log("✅ Email sent successfully:", info.response);
+      // Validate status
+      const validStatuses = ["pending", "approved", "rejected", "checked-in", "checked-out"];
+      if (!validStatuses.includes(status)) {
+          return res.status(400).json({ error: "Invalid status value" });
       }
-    });
 
-    res.status(201).json({ message: "Visitor registered successfully!", visitor: savedVisitor });
+      // Find visitor
+      const visitor = await Visitor.findById(id);
+      if (!visitor) {
+          return res.status(404).json({ error: "Visitor not found" });
+      }
+
+      // Preserve check-in and check-out times
+      let updateFields = { status };
+      if (status === "checked-in") {
+          updateFields.checkInTime = visitor.checkInTime || new Date();
+      }
+      if (status === "checked-out") {
+          updateFields.checkOutTime = visitor.checkOutTime || new Date();
+      }
+
+      // Update visitor status
+      const updatedVisitor = await Visitor.findByIdAndUpdate(id, updateFields, { new: true });
+
+      console.log(`✅ Visitor status updated: ${updatedVisitor.fullName} is now ${status}`);
+
+      // Ensure correct visitor email and photo URL
+      const visitorEmail = visitor.email || visitor.contact;
+      const visitorPhotoUrl = visitor.photo
+      ? `http://localhost:5000/uploads/${visitor.photo}`
+      : "https://via.placeholder.com/150";
+      let mailOptions;
+
+      if (status === "approved") {
+          // E-Pass Design
+          mailOptions = {
+              from: "soumyadipojha635@gmail.com",
+              to: visitorEmail,
+              subject: `Your E-Pass for Check-In`,
+              html: `
+                  <div style="max-width: 400px; margin: auto; padding: 20px; border: 2px solid #1e3c72; border-radius: 10px; text-align: center; font-family: Arial, sans-serif;">
+                      <h2 style="color: #1e3c72;">Official Visitor E-Pass</h2>
+                      <img src="${visitorPhotoUrl}" alt="Visitor Photo" style="width: 150px; height: 150px; border-radius: 50%; border: 2px solid #1e3c72; margin-bottom: 10px;">
+                      <p><strong>Name:</strong> ${visitor.fullName}</p>
+                      <p><strong>Email:</strong> ${visitor.contact}</p>
+                      <p><strong>Purpose:</strong> ${visitor.purpose}</p>
+                      <p><strong>Host:</strong> ${visitor.hostEmployee}</p>
+                      <p><strong>Time Slot:</strong> ${visitor.timeSlot}</p>
+                      <hr>
+                      <p style="color: green; font-weight: bold;">✅ Approved for Check-In</p>
+                      <p>Show this e-pass at the entrance.</p>
+                  </div>
+              `,
+          };
+      } else if (status === "rejected") {
+          // Rejection Email with Red Cross
+          mailOptions = {
+              from: "soumyadipojha635@gmail.com",
+              to: visitorEmail,
+              subject: `Visitor Request Rejected`,
+              html: `
+                  <div style="max-width: 400px; margin: auto; padding: 20px; border: 2px solid red; border-radius: 10px; text-align: center; font-family: Arial, sans-serif;">
+                      <h2 style="color: red;">Visitor Request Rejected</h2>
+                      <img src="${visitorPhotoUrl}" alt="Visitor Photo" style="width: 150px; height: 150px; border-radius: 50%; margin-bottom: 10px;">
+                      <img src="https://img.icons8.com/color/150/000000/cancel.png" alt="Rejected" style="margin-bottom: 10px;">
+                      <p><strong>Name:</strong> ${visitor.fullName}</p>
+                      <p><strong>Email:</strong> ${visitor.contact}</p>
+                      <p><strong>Purpose:</strong> ${visitor.purpose}</p>
+                      <p><strong>Host:</strong> ${visitor.hostEmployee}</p>
+                      <p><strong>Time Slot:</strong> ${visitor.timeSlot}</p>
+                      <hr>
+                      <p style="color: red; font-weight: bold;">❌ Your request has been rejected.</p>
+                      <p>If you have any queries, please contact the host.</p>
+                  </div>
+              `,
+          };
+      } else {
+          // Default Email Format for Other Statuses
+          mailOptions = {
+              from: "soumyadipojha635@gmail.com",
+              to: visitorEmail,
+              subject: `Visitor Status Update: ${status}`,
+              text: `Dear ${visitor.fullName},\n\nYour visit status has been updated to "${status}".\n\nDetails:\n- Purpose: ${visitor.purpose}\n- Host: ${visitor.hostEmployee}\n- Time Slot: ${visitor.timeSlot}\n- Check-In: ${updatedVisitor.checkInTime ? updatedVisitor.checkInTime : "Not yet"}\n- Check-Out: ${updatedVisitor.checkOutTime ? updatedVisitor.checkOutTime : "Not yet"}\n\nThank you for visiting!\n\nBest regards,\nVisitor Management Team`,
+          };
+      }
+
+      // Send Email
+      transporter.sendMail(mailOptions, (err, info) => {
+          if (err) {
+              console.error("❌ Error sending email:", err);
+          } else {
+              console.log("✅ Email sent successfully:", info.response);
+          }
+      });
+
+      res.json({
+          message: "Status updated successfully",
+          visitor: updatedVisitor,
+      });
 
   } catch (error) {
-    console.error("❌ Error registering visitor:", error);
-    res.status(500).json({ error: "Failed to register visitor" });
+      console.error("❌ Error updating visitor status:", error);
+      res.status(500).json({ error: "Server error" });
   }
 });
+
 
 
 // Fetch Visitors (Only for Logged-in Employee)
