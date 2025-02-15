@@ -38,8 +38,8 @@ mongoose
 const transporter = nodemailer.createTransport({
   service: "gmail",
   auth: {
-    user: "soumyadipojha635@gmail.com", // Replace with your email
-    pass: "fumn grvn iyoe hsup", // Use an App Password for Gmail
+    user: process.env.EMAIL_USER, // Use environment variables
+    pass: process.env.EMAIL_PASS, // Use environment variables
   },
 });
 
@@ -70,9 +70,16 @@ const visitorSchema = new mongoose.Schema({
   purpose: { type: String, required: true },
   hostEmployee: { type: String, required: true },
   company: String,
-  photo: String, // Stores file path
-  status: { type: String, enum: ["pending", "approved", "rejected"], default: "pending" },
+  photo: String,
+  status: {
+    type: String,
+    enum: ["pending", "approved", "rejected", "checked-in", "checked-out"],
+    default: "pending",
+  },
+  checkInTime: { type: Date, default: null }, // New field
+  checkOutTime: { type: Date, default: null }, // New field
 });
+
 
 const Visitor = mongoose.model("Visitor", visitorSchema);
 
@@ -163,12 +170,20 @@ app.post("/api/visitors", upload.single("photo"), async (req, res) => {
 app.put("/api/visitors/:id/status", verifyToken, async (req, res) => {
   const { status } = req.body;
 
-  if (!["approved", "rejected"].includes(status)) {
+  if (!["approved", "rejected","pending","checked-in","checked-out"].includes(status)) {
     return res.status(400).json({ error: "Invalid status" });
   }
 
   try {
-    const visitor = await Visitor.findByIdAndUpdate(req.params.id, { status }, { new: true });
+    let updateFields = { status };
+
+if (status === "checked-in") {
+  updateFields.checkInTime = new Date();
+} else if (status === "checked-out") {
+  updateFields.checkOutTime = new Date();
+}
+
+const visitor = await Visitor.findByIdAndUpdate(req.params.id, updateFields, { new: true });
     if (!visitor) return res.status(404).json({ error: "Visitor not found" });
 
     io.emit("visitorStatusUpdated", visitor);
@@ -180,34 +195,37 @@ app.put("/api/visitors/:id/status", verifyToken, async (req, res) => {
 
     sendEmail(visitorEmail, subject, text);
 
-    res.json({ message: `Visitor ${status} successfully!`, visitor });
+    res.json({
+      message: `Visitor ${status} successfully!`,
+      visitor: {
+        fullName: visitor.fullName,
+        contact: visitor.contact, // ✅ Show contact
+        status: visitor.status,
+        checkInTime: visitor.checkInTime, // ✅ Show check-in time
+        checkOutTime: visitor.checkOutTime, // ✅ Show check-out time
+      },
+    });
   } catch (err) {
     res.status(500).json({ error: "Failed to update visitor status" });
   }
 });
 
 // 🔹 Get All Pending Visitors (Protected)
-app.get("/api/visitors/pending", verifyToken, async (req, res) => {
+app.get("/api/visitors", verifyToken, async (req, res) => {
   try {
-    const pendingVisitors = await Visitor.find({ status: "pending" });
-
-    // Append full server URL to photo path for frontend
-    const visitorsWithFullPhotoUrl = pendingVisitors.map((visitor) => ({
-      ...visitor._doc,
-      photo: visitor.photo ? `http://localhost:5000${visitor.photo}` : null,
-    }));
-
-    res.json(visitorsWithFullPhotoUrl);
+    const visitors = await Visitor.find(); // Fetch all visitors
+    res.json(visitors);
   } catch (err) {
-    res.status(500).json({ error: "Failed to fetch pending visitors" });
+    res.status(500).json({ error: "Failed to fetch visitors" });
   }
 });
+
 
 // 🔹 Approve or Reject a Visitor (Protected)
 app.put("/api/visitors/:id/status", verifyToken, async (req, res) => {
   const { status } = req.body;
 
-  if (!["approved", "rejected"].includes(status)) {
+  if (!["pending", "approved", "rejected", "completed", "overstayed"].includes(status)) {
     return res.status(400).json({ error: "Invalid status" });
   }
 
@@ -215,13 +233,23 @@ app.put("/api/visitors/:id/status", verifyToken, async (req, res) => {
     const visitor = await Visitor.findByIdAndUpdate(req.params.id, { status }, { new: true });
     if (!visitor) return res.status(404).json({ error: "Visitor not found" });
 
-    io.emit("visitorStatusUpdated", visitor); // 🔔 Send real-time update
+    io.emit("visitorStatusUpdated", visitor);
+
+    // Send Email Notification
+    const visitorEmail = visitor.contact;
+    if (visitorEmail) {
+      const subject = `Your Visit Status is Updated to ${status}`;
+      const text = `Hello ${visitor.fullName},\n\nYour visit status has been updated to "${status}".\n\nThank you!`;
+
+      sendEmail(visitorEmail, subject, text);
+    }
 
     res.json({ message: `Visitor ${status} successfully!`, visitor });
   } catch (err) {
     res.status(500).json({ error: "Failed to update visitor status" });
   }
 });
+
 
 // 🔹 Real-time Connection (Socket.io)
 io.on("connection", (socket) => {
