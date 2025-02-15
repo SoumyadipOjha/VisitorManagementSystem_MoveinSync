@@ -5,6 +5,8 @@ const cors = require("cors");
 const jwt = require("jsonwebtoken");
 const bcrypt = require("bcryptjs");
 const multer = require("multer");
+const nodemailer = require("nodemailer");
+
 const path = require("path");
 const http = require("http");
 const { Server } = require("socket.io");
@@ -20,12 +22,40 @@ app.use(cors());
 app.use("/uploads", express.static(path.join(__dirname, "uploads"))); // Serve uploaded images
 
 const SECRET_KEY = process.env.SECRET_KEY || "your_secret_key";
+const ADMIN_EMAIL = "soumydipojha635@gmail.com"; // Admin email for login
+
 
 // MongoDB Connection
 mongoose
   .connect("mongodb://127.0.0.1:27017/moveDB", { useNewUrlParser: true, useUnifiedTopology: true })
   .then(() => console.log("✅ MongoDB Connected"))
   .catch((err) => console.error("❌ MongoDB Connection Error:", err));
+
+
+
+// Nodemailer Transporter (SMTP)
+// Nodemailer Transporter (SMTP)
+const transporter = nodemailer.createTransport({
+  service: "gmail",
+  auth: {
+    user: "soumyadipojha635@gmail.com", // Replace with your email
+    pass: "fumn grvn iyoe hsup", // Use an App Password for Gmail
+  },
+});
+
+const sendEmail = async (to, subject, text) => {
+  try {
+    await transporter.sendMail({
+      from: "soumyadipojha635@gmail.com", // Replace with your email
+      to,
+      subject,
+      text,
+    });
+    console.log(`📧 Email sent to ${to}`);
+  } catch (error) {
+    console.error("❌ Email sending failed:", error);
+  }
+};
 
 // Admin Login Credentials
 const ADMIN_CREDENTIALS = {
@@ -99,11 +129,11 @@ const upload = multer({
 // 🔹 Register a New Visitor with Photo
 app.post("/api/visitors", upload.single("photo"), async (req, res) => {
   try {
-    console.log("📸 Uploaded File:", req.file); // Debug log
-    console.log("📄 Form Data:", req.body); // Debug log
+    console.log("📸 Uploaded File:", req.file);
+    console.log("📄 Form Data:", req.body);
 
     const { fullName, contact, purpose, hostEmployee, company } = req.body;
-    const photo = req.file ? `/uploads/${req.file.filename}` : null; // Save correct file path
+    const photo = req.file ? `/uploads/${req.file.filename}` : null;
 
     if (!fullName || !contact || !purpose || !hostEmployee) {
       return res.status(400).json({ error: "All required fields must be filled." });
@@ -112,12 +142,47 @@ app.post("/api/visitors", upload.single("photo"), async (req, res) => {
     const newVisitor = new Visitor({ fullName, contact, purpose, hostEmployee, company, photo });
     await newVisitor.save();
 
-    io.emit("visitorAdded", newVisitor); // 🔔 Send real-time update
+    io.emit("visitorAdded", newVisitor);
+
+    // Send Email Notification to Admin
+    const adminEmail = ADMIN_EMAIL;
+    const subject = "New Visitor Registered";
+    const text = `A new visitor has registered:\n\nName: ${fullName}\nContact: ${contact}\nPurpose: ${purpose}\nHost: ${hostEmployee}\nCompany: ${company || "N/A"}\n\nPlease review their status.`;
+
+    sendEmail(adminEmail, subject, text);
 
     res.status(201).json({ message: "Visitor registered successfully!", visitor: newVisitor });
   } catch (error) {
     console.error("Error registering visitor:", error);
     res.status(500).json({ error: "Failed to register visitor" });
+  }
+});
+
+// Send Email on Visitor Status Update
+
+app.put("/api/visitors/:id/status", verifyToken, async (req, res) => {
+  const { status } = req.body;
+
+  if (!["approved", "rejected"].includes(status)) {
+    return res.status(400).json({ error: "Invalid status" });
+  }
+
+  try {
+    const visitor = await Visitor.findByIdAndUpdate(req.params.id, { status }, { new: true });
+    if (!visitor) return res.status(404).json({ error: "Visitor not found" });
+
+    io.emit("visitorStatusUpdated", visitor);
+
+    // Send Email Notification to Visitor
+    const visitorEmail = visitor.contact; // Assuming contact field contains email
+    const subject = `Your Visit Request is ${status}`;
+    const text = `Hello ${visitor.fullName},\n\nYour visit request has been ${status}.\n\nThank you!`;
+
+    sendEmail(visitorEmail, subject, text);
+
+    res.json({ message: `Visitor ${status} successfully!`, visitor });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to update visitor status" });
   }
 });
 
