@@ -58,16 +58,18 @@ const visitorSchema = new mongoose.Schema({
   hostEmployee: { type: String, required: true },
   company: { type: String },
   timeSlot: {
-      type: String,
-      required: true,
-      enum: [
-          "9:00 AM - 11:00 AM",
-          "11:00 AM - 1:00 PM",
-          "2:00 PM - 4:00 PM",
-          "4:00 PM - 6:00 PM",
-      ], // ✅ Add all allowed time slots
+    type: String,
+    required: true,
+    enum: [
+      "9:00 AM - 11:00 AM",
+      "11:00 AM - 1:00 PM",
+      "2:00 PM - 4:00 PM",
+      "4:00 PM - 6:00 PM",
+    ],
   },
   status: { type: String, default: "pending" },
+  checkInTime: { type: Date, default: null }, // ✅ Added check-in time
+  checkOutTime: { type: Date, default: null }, // ✅ Added check-out time
   photo: { type: String },
 });
 
@@ -130,33 +132,60 @@ const authMiddleware = (req, res, next) => {
 app.put("/api/visitors/:id/status", authMiddleware, async (req, res) => {
   try {
     const { id } = req.params;
-    const { status } = req.body; // Validate status
+    const { status } = req.body;
 
-    const validStatuses = ["pending", "approved", "checked-in", "checked-out"];
+    // Validate status
+    const validStatuses = ["pending", "approved", "rejected", "checked-in", "checked-out"];
     if (!validStatuses.includes(status)) {
       return res.status(400).json({ error: "Invalid status value" });
-    } // Find and update visitor
+    }
 
-    const updatedVisitor = await Visitor.findByIdAndUpdate(
-      id,
-      {
-        status,
-        checkInTime: status === "checked-in" ? new Date() : null,
-        checkOutTime: status === "checked-out" ? new Date() : null,
-      },
-      { new: true }
-    );
-
-    if (!updatedVisitor) {
+    // Find visitor
+    const visitor = await Visitor.findById(id);
+    if (!visitor) {
       return res.status(404).json({ error: "Visitor not found" });
     }
+
+    // Preserve check-in and check-out times permanently
+    let updateFields = { status };
+    if (status === "checked-in") {
+      updateFields.checkInTime = visitor.checkInTime || new Date(); // Keep old check-in time if already set
+    }
+    if (status === "checked-out") {
+      updateFields.checkOutTime = visitor.checkOutTime || new Date(); // Keep old check-out time if already set
+    }
+
+    // Update visitor
+    const updatedVisitor = await Visitor.findByIdAndUpdate(id, updateFields, { new: true });
+
+    console.log(`✅ Visitor status updated: ${updatedVisitor.fullName} is now ${status}`);
+
+    // Ensure email field is correct
+    const visitorEmail = visitor.email || visitor.contact; // Assuming `email` is correct, fallback to `contact`
+
+    // Send email notification to visitor
+    const mailOptions = {
+      from: "soumyadipojha635@gmail.com",
+      to: visitorEmail,
+      subject: `Visitor Status Update: ${status}`,
+      text: `Dear ${visitor.fullName},\n\nYour visit status has been updated to "${status}".\n\nDetails:\n- Purpose: ${visitor.purpose}\n- Host: ${visitor.hostEmployee}\n- Time Slot: ${visitor.timeSlot}\n- Check-In: ${updatedVisitor.checkInTime ? updatedVisitor.checkInTime : "Not yet"}\n- Check-Out: ${updatedVisitor.checkOutTime ? updatedVisitor.checkOutTime : "Not yet"}\n\nThank you for visiting!\n\nBest regards,\nVisitor Management Team`,
+    };
+
+    transporter.sendMail(mailOptions, (err, info) => {
+      if (err) {
+        console.error("❌ Error sending email:", err);
+      } else {
+        console.log("✅ Email sent successfully:", info.response);
+      }
+    });
 
     res.json({
       message: "Status updated successfully",
       visitor: updatedVisitor,
     });
+
   } catch (error) {
-    console.error("Error updating visitor status:", error);
+    console.error("❌ Error updating visitor status:", error);
     res.status(500).json({ error: "Server error" });
   }
 });
