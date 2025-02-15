@@ -301,6 +301,33 @@ app.get("/api/visitors", authMiddleware, async (req, res) => {
   }
 });
 
+
+
+// admiin login
+const adminLogin = (req, res) => {
+  const { username, password } = req.body;
+
+  const ADMIN_USERNAME = "admin123";
+  const ADMIN_PASSWORD = "securepassword";
+
+  if (username === ADMIN_USERNAME && password === ADMIN_PASSWORD) {
+    const token = jwt.sign({ role: "admin" }, SECRET_KEY, { expiresIn: "4h" });
+    res.json({ token, message: "Admin logged in successfully" });
+  } else {
+    res.status(401).json({ error: "Invalid admin credentials" });
+  }
+};
+// get all employee
+const getAllEmployees = async (req, res) => {
+  try {
+    const employees = await Employee.find({}, "name email");
+    res.json(employees);
+  } catch (error) {
+    res.status(500).json({ error: "Error fetching employees" });
+  }
+};
+
+
 // Start Server
 server.listen(PORT, () =>
   console.log(`🚀 Server running on http://localhost:${PORT}`)
