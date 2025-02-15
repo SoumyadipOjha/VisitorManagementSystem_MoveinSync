@@ -57,13 +57,17 @@ const visitorSchema = new mongoose.Schema({
   purpose: { type: String, required: true },
   hostEmployee: { type: String, required: true },
   company: { type: String },
-  status: {
-    type: String,
-    enum: ["pending", "approved", "checked-in", "checked-out"],
-    default: "pending",
+  timeSlot: {
+      type: String,
+      required: true,
+      enum: [
+          "9:00 AM - 11:00 AM",
+          "11:00 AM - 1:00 PM",
+          "2:00 PM - 4:00 PM",
+          "4:00 PM - 6:00 PM",
+      ], // ✅ Add all allowed time slots
   },
-  checkInTime: { type: Date },
-  checkOutTime: { type: Date },
+  status: { type: String, default: "pending" },
   photo: { type: String },
 });
 
@@ -104,13 +108,20 @@ const authMiddleware = (req, res, next) => {
 
   try {
     const decoded = jwt.verify(token, SECRET_KEY);
+    console.log("Decoded Token:", decoded); // 🔍 Debugging
     req.user = decoded;
+
+    if (!req.user || !req.user.name) {
+      return res.status(401).json({ error: "Unauthorized: Employee name missing in token" });
+    }
+
     next();
   } catch (error) {
     console.error("JWT Error:", error);
     res.status(401).json({ error: "Unauthorized: Invalid token" });
   }
 };
+
 // ==========================
 // 📌  updatde status
 // ==========================
@@ -237,61 +248,81 @@ const upload = multer({ storage });
 // Register Visitor
 app.post("/api/visitors", upload.single("photo"), async (req, res) => {
   try {
-    const { fullName, contact, purpose, hostEmployee, company } = req.body;
+    console.log("🔹 Visitor Registration Request Received");
+    console.log("Request Body:", req.body);
+    console.log("Uploaded File:", req.file);
+
+    const { fullName, contact, purpose, hostEmployee, company, timeSlot } = req.body;
     const photo = req.file ? `/uploads/${req.file.filename}` : null;
 
-    if (!fullName || !contact || !purpose || !hostEmployee) {
-      return res
-        .status(400)
-        .json({ error: "All required fields must be filled." });
+    if (!fullName || !contact || !purpose || !hostEmployee || !timeSlot) {
+      console.log("❌ Missing required fields");
+      return res.status(400).json({ error: "All required fields must be filled." });
     }
 
-    const employee = await Employee.findOne({ name: hostEmployee });
-    if (!employee)
-      return res.status(400).json({ error: "Invalid host employee" });
-
+    // Save the visitor first
     const newVisitor = new Visitor({
       fullName,
       contact,
       purpose,
       hostEmployee,
       company,
+      status: "pending",
+      timeSlot,
       photo,
     });
-    await newVisitor.save();
 
-    io.emit("visitorAdded", newVisitor);
-    sendEmail(
-      employee.email,
-      "New Visitor Alert",
-      `Visitor ${fullName} is here to meet you!`
-    );
+    const savedVisitor = await newVisitor.save();
+    console.log("✅ Visitor Saved:", savedVisitor);
 
-    res.status(201).json({
-      message: "Visitor registered successfully!",
-      visitor: newVisitor,
+    // 🔹 Find the host employee's email
+    const host = await Employee.findOne({ name: hostEmployee });
+
+    // ❗ Check if host exists
+    if (!host) {
+      console.error("❌ Host employee not found.");
+      return res.status(404).json({ error: `Host employee '${hostEmployee}' not found.` });
+    }
+
+    console.log("📧 Sending Email to:", host.email);
+
+    // Email options
+    const mailOptions = {
+      from: "your-email@gmail.com",
+      to: host.email,
+      subject: "New Visitor Registered",
+      text: `Hello ${hostEmployee},\n\nA new visitor has been registered.\n\nName: ${fullName}\nContact: ${contact}\nPurpose: ${purpose}\nTime Slot: ${timeSlot}\nCompany: ${company || "N/A"}\n\nPlease check your dashboard for more details.\n\nBest regards,\nVisitor Management System`,
+    };
+
+    // Send email
+    transporter.sendMail(mailOptions, (err, info) => {
+      if (err) {
+        console.error("❌ Error sending email:", err);
+      } else {
+        console.log("✅ Email sent successfully:", info.response);
+      }
     });
+
+    res.status(201).json({ message: "Visitor registered successfully!", visitor: savedVisitor });
+
   } catch (error) {
+    console.error("❌ Error registering visitor:", error);
     res.status(500).json({ error: "Failed to register visitor" });
   }
 });
+
 
 // Fetch Visitors (Only for Logged-in Employee)
 // Fetch Visitors (Only for Logged-in Employee)
 app.get("/api/visitors", authMiddleware, async (req, res) => {
   try {
-    if (!req.user || !req.user.name) {
-      return res
-        .status(401)
-        .json({ error: "Unauthorized: Employee name missing in token" });
-    }
-
+    console.log("Authenticated User:", req.user); // 🔍 Debugging
     const visitors = await Visitor.find({ hostEmployee: req.user.name });
 
+    console.log("Visitors Found:", visitors.length); // 🔍 Debugging
+
     if (!visitors.length) {
-      return res
-        .status(404)
-        .json({ message: "No visitors found for this employee" });
+      return res.status(404).json({ message: "No visitors found for this employee" });
     }
 
     res.json(visitors);
@@ -301,31 +332,29 @@ app.get("/api/visitors", authMiddleware, async (req, res) => {
   }
 });
 
+// // admiin login
+// const adminLogin = (req, res) => {
+//   const { username, password } = req.body;
 
+//   const ADMIN_USERNAME = "admin123";
+//   const ADMIN_PASSWORD = "securepassword";
 
-// admiin login
-const adminLogin = (req, res) => {
-  const { username, password } = req.body;
-
-  const ADMIN_USERNAME = "admin123";
-  const ADMIN_PASSWORD = "securepassword";
-
-  if (username === ADMIN_USERNAME && password === ADMIN_PASSWORD) {
-    const token = jwt.sign({ role: "admin" }, SECRET_KEY, { expiresIn: "4h" });
-    res.json({ token, message: "Admin logged in successfully" });
-  } else {
-    res.status(401).json({ error: "Invalid admin credentials" });
-  }
-};
-// get all employee
-const getAllEmployees = async (req, res) => {
-  try {
-    const employees = await Employee.find({}, "name email");
-    res.json(employees);
-  } catch (error) {
-    res.status(500).json({ error: "Error fetching employees" });
-  }
-};
+//   if (username === ADMIN_USERNAME && password === ADMIN_PASSWORD) {
+//     const token = jwt.sign({ role: "admin" }, SECRET_KEY, { expiresIn: "4h" });
+//     res.json({ token, message: "Admin logged in successfully" });
+//   } else {
+//     res.status(401).json({ error: "Invalid admin credentials" });
+//   }
+// };
+// // get all employee
+// const getAllEmployees = async (req, res) => {
+//   try {
+//     const employees = await Employee.find({}, "name email");
+//     res.json(employees);
+//   } catch (error) {
+//     res.status(500).json({ error: "Error fetching employees" });
+//   }
+// };
 
 
 // Start Server
