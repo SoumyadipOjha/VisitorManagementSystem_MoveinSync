@@ -62,8 +62,8 @@ const visitorSchema = new mongoose.Schema({
     enum: [
       "9:00 AM - 11:00 AM",
       "11:00 AM - 1:00 PM",
-      "2:00 PM - 4:00 PM",
-      "4:00 PM - 6:00 PM",
+      "1:00 PM - 3:00 PM",
+      "3:00 PM - 5:00 PM",
     ],
   },
   status: { type: String, default: "pending" },
@@ -406,32 +406,6 @@ app.get("/api/visitors", authMiddleware, async (req, res) => {
     res.status(500).json({ error: "Failed to fetch visitors" });
   }
 });
-
-// // admiin login
-// const adminLogin = (req, res) => {
-//   const { username, password } = req.body;
-
-//   const ADMIN_USERNAME = "admin123";
-//   const ADMIN_PASSWORD = "securepassword";
-
-//   if (username === ADMIN_USERNAME && password === ADMIN_PASSWORD) {
-//     const token = jwt.sign({ role: "admin" }, SECRET_KEY, { expiresIn: "4h" });
-//     res.json({ token, message: "Admin logged in successfully" });
-//   } else {
-//     res.status(401).json({ error: "Invalid admin credentials" });
-//   }
-// };
-// // get all employee
-// const getAllEmployees = async (req, res) => {
-//   try {
-//     const employees = await Employee.find({}, "name email");
-//     res.json(employees);
-//   } catch (error) {
-//     res.status(500).json({ error: "Error fetching employees" });
-//   }
-// };
-
-
 // Start Server
 server.listen(PORT, () =>
   console.log(`🚀 Server running on http://localhost:${PORT}`)
